@@ -36,6 +36,11 @@ import torch.multiprocessing as mp
 # Use ResNet 50
 import torchvision.models as models
 
+from torch.utils.tensorboard import SummaryWriter
+
+log_dir = '/home/ec2-user/logs/cnn'
+
+writer = SummaryWriter(log_dir=log_dir)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -170,31 +175,31 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ImageClassificationBase(nn.Module):
-    
+
     def training_step(self, batch):
         images, labels = batch 
         out = self(images)                  # Generate predictions
         loss = F.cross_entropy(out, labels) # Calculate loss
         return loss
-    
+
     def validation_step(self, batch):
         images, labels = batch 
         out = self(images)                    # Generate predictions
         loss = F.cross_entropy(out, labels)   # Calculate loss
         acc = accuracy(out, labels)           # Calculate accuracy
         return {'val_loss': loss.detach(), 'val_acc': acc}
-        
+
     def validation_epoch_end(self, outputs):
         batch_losses = [x['val_loss'] for x in outputs]
         epoch_loss = torch.stack(batch_losses).mean()   # Combine losses
         batch_accs = [x['val_acc'] for x in outputs]
         epoch_acc = torch.stack(batch_accs).mean()      # Combine accuracies
         return {'val_loss': epoch_loss.item(), 'val_acc': epoch_acc.item()}
-    
+
     def epoch_end(self, epoch, result):
         print("Epoch [{}], train_loss: {:.4f}, val_loss: {:.4f}, val_acc: {:.4f}".format(
             epoch, result['train_loss'], result['val_loss'], result['val_acc']))
-        
+
 class CellClassification(ImageClassificationBase):
     def __init__(self):
         super().__init__()
@@ -259,8 +264,12 @@ class CellPhenotypingTrainer():
         train_acc = 0.0
         
         with torch.profiler.profile(
+	activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
         schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('/home/ec2-user/logs/cnn'),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler(log_dir),
         record_shapes=True,
         profile_memory=True,
         with_stack=True) as prof:
@@ -273,6 +282,7 @@ class CellPhenotypingTrainer():
                 self.optimizer.zero_grad()
                 logits = model(images)
                 loss = self.criterion(logits,labels)
+                writer.add_scalar("Loss/train", loss, epoch)
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -426,6 +436,9 @@ def train_model(rank, args):
     trainer = CellPhenotypingTrainer(criterion,optimizer)
 
     trainer.fit(model,trainloader,testloader,args,epochs = args.epochs)
+    print('Closing summary writer')
+    writer.flush()
+    writer.close()
 
 def cross_validation_model(args):
     
