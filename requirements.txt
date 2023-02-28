@@ -1,0 +1,7 @@
+tqdm
+numpy
+torch
+torchvision
+timm
+tensorflow
+torchsummary
