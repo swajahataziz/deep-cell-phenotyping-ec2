@@ -372,19 +372,22 @@ def accuracy(y_pred,y_true):
 def train_model(rank, args):
     
     print(f'setting up {rank} {args.world_size}')
-
+    rank = xm.get_ordinal()
+    world_size = xm.xrt_world_size()
     # set up the master's ip address so this child process can coordinate
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     print(f"{args.master_addr} {args.master_port}")
 
     # Initializes the default distributed process group, and this will also initialize the distributed package.
-    dist.init_process_group('xla')
+    dist.init_process_group('xla',
+                            rank=rank,
+                            world_size=world_size)
 
     print(f"{rank} init complete")
     
     args.world_size = args.world_size
-    args.rank = rank = xm.get_ordinal()
+    args.rank = rank
     args.local_rank = local_rank = int(os.getenv("LOCAL_RANK", -1))
     args.batch_size = 32
     args.device = device = xm.xla_device()
@@ -399,10 +402,10 @@ def train_model(rank, args):
             args.world_size,
         )
 
-    if not torch.cuda.is_available():
-        raise CUDANotFoundException(
-            "Must run smdistributed.dataparallel MNIST example on CUDA-capable devices."
-        )
+    #if not torch.cuda.is_available():
+    #    raise CUDANotFoundException(
+    #        "Must run smdistributed.dataparallel MNIST example on CUDA-capable devices."
+    #    )
 
     torch.manual_seed(args.seed)
 
@@ -435,7 +438,7 @@ def train_model(rank, args):
                       find_unused_parameters=True,
                       gradient_as_bucket_view=True)
 
-    summary(model,input_size=(channels,img_size,img_size))
+    # summary(model,input_size=(channels,img_size,img_size))
 
 
     criterion = nn.CrossEntropyLoss()
@@ -500,5 +503,5 @@ if __name__ == '__main__':
     args.world_size = 8
     args.master_addr = '127.0.0.1'
     args.master_port = find_free_port()
-    mp.spawn(train_model, args=(args,), nprocs=args.world_size)
+    xmp.spawn(train_model, args=(args,), nprocs=args.world_size)
 
