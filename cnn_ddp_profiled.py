@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from tqdm import tqdm
+import sys
 
 import numpy as np 
 
@@ -43,7 +44,11 @@ log_dir = '/home/ec2-user/logs/cnn'
 writer = SummaryWriter(log_dir=log_dir)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logging.basicConfig(
+    level=logging.getLevelName("INFO"),
+    handlers=[logging.StreamHandler(sys.stdout)],
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 
 #device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
