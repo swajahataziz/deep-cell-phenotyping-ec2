@@ -14,7 +14,6 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.profiler
-import timm # PyTorch Image Models
 from torch.utils.data import Dataset, DataLoader
 import tensorflow as tf
 from torchvision import transforms as T,datasets
@@ -43,6 +42,7 @@ log_dir = '/home/ec2-user/logs/cnn'
 
 writer = SummaryWriter(log_dir=log_dir)
 
+## Set up log configuration
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.getLevelName("INFO"),
