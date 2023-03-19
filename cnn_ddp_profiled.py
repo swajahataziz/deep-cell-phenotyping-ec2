@@ -57,7 +57,7 @@ img_size = 75
 channels = 4
 train_dir = '/home/ec2-user/input/data/train/'
 test_dir = '/home/ec2-user/input/data/test/'
-df = []
+metrics = []
 
 def find_free_port():
     """ https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number """
@@ -340,6 +340,8 @@ class CellPhenotypingTrainer():
     def fit(self,model,trainloader,validloader,args,epochs):
         
         valid_min_loss = np.Inf 
+        avg_valid_loss = 0.0
+        avg_valid_acc = 0.0
         
         for i in range(epochs):
             
@@ -355,7 +357,7 @@ class CellPhenotypingTrainer():
                     valid_min_loss = avg_valid_loss
                 print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
 
-            df.append([
+            metrics.append([
                 i, avg_train_loss, avg_train_acc, avg_valid_loss, avg_valid_acc
             ])
             #print("Epoch : {} Train Loss:{:.6f}; Train Acc:{:.6f};".format(i+1, avg_train_loss, avg_train_acc))
@@ -452,10 +454,11 @@ def train_model(rank, args):
             labels = labels.to(args.device)
             logits = model(images)
     
-    print(inf_profiler.key_averages().table(sort_by="total_average"))
+    print(inf_profiler.total_average())
+
     with open("/home/ec2-user/output/ml/inference_logs.txt", "w") as f:
-        f.write(inf_profiler.key_averages().table(sort_by="total_average"))
-    df = pd.DataFrame(df, columns=[
+        f.write(str(inf_profiler.total_average()))
+    df = pd.DataFrame(metrics, columns=[
         "epoch", 
         "avg_train_loss",
         "avg_train_acc",
