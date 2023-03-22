@@ -8,6 +8,7 @@ from tqdm import tqdm
 import sys
 
 import numpy as np 
+import pandas as pd
 
 import torch
 import torch.distributed as dist
@@ -56,6 +57,7 @@ img_size = 75
 channels = 4
 train_dir = '/home/ec2-user/input/data/train/'
 test_dir = '/home/ec2-user/input/data/test/'
+metrics = []
 
 def find_free_port():
     """ https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number """
@@ -175,9 +177,6 @@ class CustomDataset(Dataset):
                 new_image = np.rot90(new_image)
             new_data.append(new_image)
         return new_data
-
-import torch.nn as nn
-import torch.nn.functional as F
 
 class ImageClassificationBase(nn.Module):
 
@@ -341,6 +340,8 @@ class CellPhenotypingTrainer():
     def fit(self,model,trainloader,validloader,args,epochs):
         
         valid_min_loss = np.Inf 
+        avg_valid_loss = 0.0
+        avg_valid_acc = 0.0
         
         for i in range(epochs):
             
@@ -356,6 +357,9 @@ class CellPhenotypingTrainer():
                     valid_min_loss = avg_valid_loss
                 print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
 
+            metrics.append([
+                i, avg_train_loss, avg_train_acc, avg_valid_loss, avg_valid_acc
+            ])
             #print("Epoch : {} Train Loss:{:.6f}; Train Acc:{:.6f};".format(i+1, avg_train_loss, avg_train_acc))
             #print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
         return valid_min_loss
@@ -441,6 +445,29 @@ def train_model(rank, args):
     trainer = CellPhenotypingTrainer(criterion,optimizer)
 
     trainer.fit(model,trainloader,testloader,args,epochs = args.epochs)
+    model.load_state_dict(torch.load("/home/ec2-user/output/ml/CellPhenotypingModel.pt"))
+    model.to(args.device)
+    model.eval()
+    with torch.autograd.profiler.profile(use_cuda=True) as inf_profiler:
+        for images,labels in tqdm(testloader):
+            images = images.to(args.device) 
+            labels = labels.to(args.device)
+            logits = model(images)
+    
+    print(inf_profiler.total_average())
+
+    with open("/home/ec2-user/output/ml/inference_logs.txt", "w") as f:
+        f.write(str(inf_profiler.total_average()))
+    df = pd.DataFrame(metrics, columns=[
+        "epoch", 
+        "avg_train_loss",
+        "avg_train_acc",
+        "avg_valid_loss", 
+        "avg_valid_acc"
+    ])
+    df.to_csv("/home/ec2-user/output/ml/metrics.csv", index=False)
+
+
     print('Closing summary writer')
     writer.flush()
     writer.close()
