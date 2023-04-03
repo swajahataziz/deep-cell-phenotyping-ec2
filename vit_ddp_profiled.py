@@ -37,9 +37,16 @@ import torchvision.models as models
 
 from torch.utils.tensorboard import SummaryWriter
 
+## Set environment parameters
+
 log_dir = '/home/ec2-user/logs/vit'
 model_dir = '/home/ec2-user/output/ml'
 model_file = 'CellPhenotypingViT.pt'
+img_size = 75                          # Resize all the images to be 244 by 244
+channels = 4
+train_dir = '/home/ec2-user/input/data/train/'
+test_dir = '/home/ec2-user/input/data/test/'
+
 writer = SummaryWriter(log_dir=log_dir)
 
 ## Set up log configuration
@@ -52,10 +59,6 @@ logging.basicConfig(
 
 #device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-img_size = 75                          # Resize all the images to be 244 by 244
-channels = 4
-train_dir = '/home/ec2-user/input/data/train/'
-test_dir = '/home/ec2-user/input/data/test/'
 metrics = []
 
 def find_free_port():
