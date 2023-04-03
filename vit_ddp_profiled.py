@@ -38,7 +38,8 @@ import torchvision.models as models
 from torch.utils.tensorboard import SummaryWriter
 
 log_dir = '/home/ec2-user/logs/vit'
-
+model_dir = '/home/ec2-user/output/ml'
+model_file = 'CellPhenotypingViT.pt'
 writer = SummaryWriter(log_dir=log_dir)
 
 ## Set up log configuration
@@ -55,6 +56,7 @@ img_size = 75                          # Resize all the images to be 244 by 244
 channels = 4
 train_dir = '/home/ec2-user/input/data/train/'
 test_dir = '/home/ec2-user/input/data/test/'
+metrics = []
 
 def find_free_port():
     """ https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number """
@@ -188,37 +190,50 @@ class CellPhenotypingTrainer():
         train_loss = 0.0
         train_acc = 0.0
         
-        for batch_idx, (images, labels) in enumerate(trainloader):
-        
-        #for images,labels in tqdm(trainloader): 
+        with torch.profiler.profile(
+    activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler(log_dir),
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True) as prof:
+            for batch_idx, (images, labels) in enumerate(trainloader):
             
-            # move the data to CPU
-            images = images.to(device)
-            labels = labels.to(device)
-            self.optimizer.zero_grad()
-            logits = model(images)
-            loss = self.criterion(logits,labels)
-            
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            
-            train_loss += loss.item()
-            train_acc += accuracy(logits,labels)
-            if batch_idx % args.log_interval == 0 and args.rank == 0:
-                print(
-                    "Train Epoch: {} [{}/{} ({:.0f}%)]; Train Loss: {:.6f}; Train Acc: {:.6f};".format(
-                        epoch,
-                        batch_idx * len(images) * args.world_size,
-                        len(trainloader.dataset),
-                        100.0 * batch_idx / len(trainloader),
-                        train_loss / len(trainloader),
-                        train_acc / len(trainloader)
+            #for images,labels in tqdm(trainloader): 
+                
+                # move the data to GPU
+                images = images.to(device)
+                labels = labels.to(device)
+                self.optimizer.zero_grad()
+                logits = model(images)
+                loss = self.criterion(logits,labels)
+                
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                
+                train_loss += loss.item()
+                train_acc += accuracy(logits,labels)
+                if batch_idx % args.log_interval == 0 and args.rank == 0:
+                    print(
+                        "Train Epoch: {} [{}/{} ({:.0f}%)]; Train Loss: {:.6f}; Train Acc: {:.6f};".format(
+                            epoch,
+                            batch_idx * len(images) * args.world_size,
+                            len(trainloader.dataset),
+                            100.0 * batch_idx / len(trainloader),
+                            train_loss / len(trainloader),
+                            train_acc / len(trainloader)
+                        )
                     )
-                )
-            if args.verbose:
-                print("Batch", batch_idx, "from rank", args.rank)            
-            
+                if args.verbose:
+                    print("Batch", batch_idx, "from rank", args.rank)            
+                prof.step()  # Need to call this at the end of each step to notify profiler of steps' boundary.    
+
+            prof.stop()
+
         return train_loss / len(trainloader), train_acc / len(trainloader) 
 
     
@@ -246,6 +261,8 @@ class CellPhenotypingTrainer():
     def fit(self,model,trainloader,validloader,args,epochs):
         
         valid_min_loss = np.Inf 
+        avg_valid_loss = 0.0
+        avg_valid_acc = 0.0
         
         for i in range(epochs):
             
@@ -257,12 +274,14 @@ class CellPhenotypingTrainer():
                 avg_valid_loss, avg_valid_acc = self.valid_batch_loop(model,validloader,args) ###
                 if avg_valid_loss <= valid_min_loss :
                     print("Valid_loss decreased {} --> {}".format(valid_min_loss,avg_valid_loss))
-                    torch.save(model.state_dict(),'/home/ec2-user/output/ml/CellPhenotypingViT.pt')
+                    torch.save(model.state_dict(), os.path.join(model_dir, model_file))
                     valid_min_loss = avg_valid_loss
                 print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
 
-            #print("Epoch : {} Train Loss:{:.6f}; Train Acc:{:.6f};".format(i+1, avg_train_loss, avg_train_acc))
-            #print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
+            metrics.append([
+                i, avg_train_loss, avg_train_acc, avg_valid_loss, avg_valid_acc
+            ])
+        return valid_min_loss
             
 
 def accuracy(y_pred,y_true):
@@ -303,7 +322,7 @@ def train_model(rank, args):
 
     if not torch.cuda.is_available():
         raise CUDANotFoundException(
-            "Must run smdistributed.dataparallel MNIST example on CUDA-capable devices."
+            "Must run smdistributed.dataparallel training on CUDA-capable devices."
         )
 
     torch.manual_seed(args.seed)
@@ -345,6 +364,33 @@ def train_model(rank, args):
     trainer = CellPhenotypingTrainer(criterion,optimizer)
 
     trainer.fit(model,trainloader,testloader,args,epochs = args.epochs)
+
+    model.load_state_dict(torch.load(os.path.join(model_dir, model_file)))
+    model.to(args.device)
+    model.eval()
+    with torch.autograd.profiler.profile(use_cuda=True) as inf_profiler:
+        for images,labels in tqdm(testloader):
+            images = images.to(args.device) 
+            labels = labels.to(args.device)
+            logits = model(images)
+    
+    print(inf_profiler.total_average())
+
+    with open("/home/ec2-user/output/ml/inference_logs.txt", "w") as f:
+        f.write(str(inf_profiler.total_average()))
+    df = pd.DataFrame(metrics, columns=[
+        "epoch", 
+        "avg_train_loss",
+        "avg_train_acc",
+        "avg_valid_loss", 
+        "avg_valid_acc"
+    ])
+    df.to_csv("/home/ec2-user/output/ml/metrics.csv", index=False)
+
+
+    print('Closing summary writer')
+    writer.flush()
+    writer.close()
 
 
 if __name__ == '__main__':
