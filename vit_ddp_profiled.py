@@ -79,7 +79,7 @@ class CustomDataset(Dataset):
         file_list = glob.glob(self.root_dir + "*")
         print(file_list)
         self.data = []
-        self.datashape=(channels,dim,dim)
+        self.datashape=(dim,dim,channels)
         self.TotalSamples=TotalSamples
 
         for class_path in file_list:
@@ -95,8 +95,6 @@ class CustomDataset(Dataset):
                     im = [x[image].astype(float)]
                     im = np.array(im)
                     im = im.squeeze()
-                    #channel first for PyTorch
-                    im = np.moveaxis(im, source=-1, destination=0)                        
                     if im.shape == self.datashape:
                         self.data.append([im, class_name])
         self.data = self.format_data(True)
@@ -180,7 +178,7 @@ class CustomDataset(Dataset):
             new_image = data[random.randint(1,len(data)-1)]
             for r in range(random.randint(1,3)):
                 # channel first for PyTorch
-                new_image = np.rot90(new_image, axes=(1,2))
+                new_image = np.rot90(new_image)
             new_data.append(new_image)
         return new_data
 
@@ -353,7 +351,7 @@ def train_model(rank, args):
     testset = CustomDataset(root_dir=test_dir, dim=img_size, channels=channels, TotalSamples=1000)
     testloader = DataLoader(testset,batch_size=args.batch_size,shuffle=True)
     
-    model = timm.create_model('vit_large_patch32_224_in21k', pretrained=False, img_size=img_size, in_chans=4, num_classes=8, drop_rate=0.5)
+    model = timm.create_model('vit_base_patch8_224_dino', pretrained=False, img_size=img_size, in_chans=4, num_classes=8)
     
     model = model.to(device)
 
@@ -362,7 +360,7 @@ def train_model(rank, args):
                       output_device=rank,
                       find_unused_parameters=True)
 
-    summary(model,input_size=(channels,img_size,img_size))
+    summary(model,input_size=(img_size,img_size, channels))
 
 
     criterion = nn.CrossEntropyLoss()
