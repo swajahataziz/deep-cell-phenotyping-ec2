@@ -79,7 +79,7 @@ class CustomDataset(Dataset):
         file_list = glob.glob(self.root_dir + "*")
         print(file_list)
         self.data = []
-        self.datashape=(dim,dim,channels)
+        self.datashape=(channels,dim,dim)
         self.TotalSamples=TotalSamples
 
         for class_path in file_list:
@@ -94,7 +94,9 @@ class CustomDataset(Dataset):
                 for image in range(size[0]):
                     im = [x[image].astype(float)]
                     im = np.array(im)
-                    im = im.squeeze()  
+                    im = im.squeeze()
+                    #channel first for PyTorch
+                    im = np.moveaxis(im, source=-1, destination=0)                        
                     if im.shape == self.datashape:
                         self.data.append([im, class_name])
         self.data = self.format_data(True)
@@ -177,7 +179,8 @@ class CustomDataset(Dataset):
         for i in range(self.TotalSamples-len(data)):
             new_image = data[random.randint(1,len(data)-1)]
             for r in range(random.randint(1,3)):
-                new_image = np.rot90(new_image)
+                # channel first for PyTorch
+                new_image = np.rot90(new_image, axes=(1,2))
             new_data.append(new_image)
         return new_data
 
