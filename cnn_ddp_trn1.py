@@ -13,7 +13,6 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.profiler
-import timm # PyTorch Image Models
 from torch.utils.data import Dataset, DataLoader
 import tensorflow as tf
 from torchvision import transforms as T,datasets
@@ -35,8 +34,6 @@ import torch_xla.core.xla_model as xm
 import torch_xla.distributed.xla_multiprocessing as xmp
 import torch_xla.distributed.xla_backend
 
-# Use ResNet 50
-import torchvision.models as models
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -342,7 +339,9 @@ class CellPhenotypingTrainer():
     def fit(self,model,trainloader,validloader,args,epochs):
         
         valid_min_loss = np.Inf 
-        
+        avg_valid_loss = 0.0
+        avg_valid_acc = 0.0
+
         for i in range(epochs):
             
             model.train() # this turn on dropout
@@ -353,12 +352,13 @@ class CellPhenotypingTrainer():
                 avg_valid_loss, avg_valid_acc = self.valid_batch_loop(model,validloader,args) ###
                 if avg_valid_loss <= valid_min_loss :
                     print("Valid_loss decreased {} --> {}".format(valid_min_loss,avg_valid_loss))
-                    torch.save(model.state_dict(),'/home/ec2-user/output/ml/CellPhenotypingModel.pt')
+                    torch.save(model.state_dict(), os.path.join(model_dir, model_file))
                     valid_min_loss = avg_valid_loss
                 print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
 
-            #print("Epoch : {} Train Loss:{:.6f}; Train Acc:{:.6f};".format(i+1, avg_train_loss, avg_train_acc))
-            #print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
+            metrics.append([
+                i, avg_train_loss, avg_train_acc, avg_valid_loss, avg_valid_acc
+            ])
         return valid_min_loss
             
 
@@ -386,7 +386,7 @@ def train_model(rank, args):
 
     print(f"{rank} init complete")
     
-    args.world_size = args.world_size
+    args.world_size = world_size
     args.rank = rank
     args.local_rank = local_rank = int(os.getenv("LOCAL_RANK", -1))
     args.batch_size = 32
@@ -447,6 +447,29 @@ def train_model(rank, args):
     trainer = CellPhenotypingTrainer(criterion,optimizer)
 
     trainer.fit(model,trainloader,testloader,args,epochs = args.epochs)
+
+    model.load_state_dict(torch.load(os.path.join(model_dir, model_file)))
+    model.to(args.device)
+    model.eval()
+    with torch.autograd.profiler.profile(use_cuda=True) as inf_profiler:
+        for images, labels in tqdm(testloader):
+            images = images.to(args.device)
+            labels = labels.to(args.device)
+            logits = model(images)
+
+    print(inf_profiler.total_average())
+
+    with open("/home/ec2-user/output/ml/inference_logs.txt", "w") as f:
+        f.write(str(inf_profiler.total_average()))
+    df = pd.DataFrame(metrics, columns=[
+        "epoch",
+        "avg_train_loss",
+        "avg_train_acc",
+        "avg_valid_loss",
+        "avg_valid_acc"
+    ])
+    df.to_csv("/home/ec2-user/output/ml/metrics.csv", index=False)
+
     print('Closing summary writer')
     writer.flush()
     writer.close()
