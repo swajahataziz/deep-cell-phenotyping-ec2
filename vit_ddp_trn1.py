@@ -8,7 +8,7 @@ from tqdm import tqdm
 import sys
 
 import numpy as np 
-import pandas as pd
+##import pandas as pd
 
 import torch
 import torch.distributed as dist
@@ -265,7 +265,7 @@ class CellPhenotypingTrainer():
 
                 valid_loss += loss.item()
                 valid_acc += accuracy(logits,labels)
-                xm.mark_step()
+                #xm.mark_step()
 
         return valid_loss / len(validloader), valid_acc / len(validloader)
             
@@ -286,7 +286,7 @@ class CellPhenotypingTrainer():
                 avg_valid_loss, avg_valid_acc = self.valid_batch_loop(model,validloader,args) ###
                 if avg_valid_loss <= valid_min_loss :
                     print("Valid_loss decreased {} --> {}".format(valid_min_loss,avg_valid_loss))
-                    torch.save(model.state_dict(), os.path.join(model_dir, model_file))
+                    xm.save(model.state_dict(), os.path.join(model_dir, model_file))
                     valid_min_loss = avg_valid_loss
                 print("Epoch : {} Valid Loss:{:.6f}; Valid Acc:{:.6f};".format(i+1, avg_valid_loss, avg_valid_acc))
 
@@ -303,40 +303,30 @@ def accuracy(y_pred,y_true):
     return torch.mean(equals.type(torch.FloatTensor))
 
 
-def train_model(rank, args):
+def train_model(args):
     
-    print(f'setting up {rank} {args.world_size}')
-    rank = xm.get_ordinal()
+    # print(f'setting up {rank} {args.world_size}')
     world_size = xm.xrt_world_size()
 
     # set up the master's ip address so this child process can coordinate
-    os.environ['MASTER_ADDR'] = args.master_addr
-    os.environ['MASTER_PORT'] = args.master_port
-    print(f"{args.master_addr} {args.master_port}")
+    # os.environ['MASTER_ADDR'] = args.master_addr
+    # os.environ['MASTER_PORT'] = args.master_port
+    # print(f"{args.master_addr} {args.master_port}")
 
     # Initializes the default distributed process group, and this will also initialize the distributed package.
     # Initializes the default distributed process group, and this will also initialize the distributed package.
-    dist.init_process_group('xla',
-                            rank=rank,
-                            world_size=world_size)
+    dist.init_process_group('xla')
+    #                        rank=rank,
+    #                        world_size=world_size)
 
-    print(f"{rank} init complete")
+    # print(f"{rank} init complete")
     
     args.world_size = world_size
+    args.device = device = xm.xla_device()
+    rank = xm.get_ordinal()
     args.rank = rank
     args.local_rank = local_rank = int(os.getenv("LOCAL_RANK", -1))
     args.batch_size = 32
-    args.device = device = xm.xla_device()
-    
-    if args.verbose:
-        print(
-            "Hello from rank",
-            rank,
-            "of local_rank",
-            local_rank,
-            "in world size of",
-            args.world_size,
-        )
 
     torch.manual_seed(args.seed)
 
@@ -363,10 +353,10 @@ def train_model(rank, args):
     
     model = model.to(device)
 
-    model = DDP(model,
-                      device_ids=[rank],
-                      output_device=rank,
-                      find_unused_parameters=True)
+    model = DDP(model, gradient_as_bucket_view=True)
+    #                  device_ids=[rank],
+    #                  output_device=rank,
+    #                  find_unused_parameters=True)
 
     #summary(model,input_size=(channels,img_size,img_size))
 
@@ -389,16 +379,6 @@ def train_model(rank, args):
     
     print(inf_profiler.total_average())
 
-    with open("/home/ec2-user/output/ml/inference_logs.txt", "w") as f:
-        f.write(str(inf_profiler.total_average()))
-    df = pd.DataFrame(metrics, columns=[
-        "epoch", 
-        "avg_train_loss",
-        "avg_train_acc",
-        "avg_valid_loss", 
-        "avg_valid_acc"
-    ])
-    df.to_csv("/home/ec2-user/output/ml/metrics.csv", index=False)
 
 
     print('Closing summary writer')
@@ -424,7 +404,8 @@ if __name__ == '__main__':
     parser.add_argument("--verbose", action="store_true", default=False,
                         help="For displaying smdistributed.dataparallel-specific logs")
     args = parser.parse_args()
-    args.world_size = 8
-    args.master_addr = '127.0.0.1'
-    args.master_port = find_free_port()
-    mp.spawn(train_model, args=(args,), nprocs=args.world_size)
+    #args.world_size = 8
+    #args.master_addr = '127.0.0.1'
+    #args.master_port = find_free_port()
+    #xmp.spawn(train_model, args=(args,), nprocs=args.world_size)
+    train_model(args)
